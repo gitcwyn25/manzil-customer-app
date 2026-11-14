@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { Loader2, AlertCircle, ArrowRight } from "lucide-react";
 import { Wordmark } from "@/components/brand/Wordmark";
@@ -8,79 +8,140 @@ type CallbackSearchParams = {
   next?: string;
   error?: string;
   error_description?: string;
+  code?: string;
 };
 
 export const Route = createFileRoute("/auth/callback")({
   validateSearch: (search: Record<string, unknown>): CallbackSearchParams => {
     return {
-      next: typeof search.next === "string" ? search.next : "/community",
+      next: typeof search.next === "string" ? search.next : undefined,
       error: typeof search.error === "string" ? search.error : undefined,
       error_description:
         typeof search.error_description === "string" ? search.error_description : undefined,
+      code: typeof search.code === "string" ? search.code : undefined,
     };
   },
   component: AuthCallbackPage,
 });
 
+function sanitizeDestination(dest: string | null | undefined): string {
+  if (!dest) return "/community";
+  // Prevent redirect loops back to auth pages or root
+  if (
+    dest === "/" ||
+    dest === "/auth" ||
+    dest.startsWith("/auth/") ||
+    dest === "/login" ||
+    dest === "/register"
+  ) {
+    return "/community";
+  }
+  // Must be a safe internal relative path
+  if (!dest.startsWith("/") || dest.startsWith("//")) {
+    return "/community";
+  }
+  return dest;
+}
+
 function AuthCallbackPage() {
   const navigate = useNavigate();
   const search = Route.useSearch();
-  const [error, setError] = useState<string | null>(search.error_description || search.error || null);
+  const [error, setError] = useState<string | null>(null);
+  const handledRef = useRef(false);
 
   useEffect(() => {
-    if (error) return;
+    if (handledRef.current) return;
+    handledRef.current = true;
 
     let mounted = true;
 
-    const processSession = async () => {
+    const resolveDestination = (): string => {
+      let storedNext: string | null = null;
       try {
-        const { data, error: sessionError } = await supabase.auth.getSession();
+        storedNext = window.sessionStorage.getItem("manzil-auth-next");
+        window.sessionStorage.removeItem("manzil-auth-next");
+      } catch {}
+
+      return sanitizeDestination(storedNext || search.next);
+    };
+
+    const processAuth = async () => {
+      try {
+        // 1. Check for provider error in query string or URL hash
+        const urlParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+
+        const providerError =
+          urlParams.get("error_description") ||
+          urlParams.get("error") ||
+          hashParams.get("error_description") ||
+          hashParams.get("error");
+
+        if (providerError) {
+          throw new Error(decodeURIComponent(providerError.replace(/\+/g, " ")));
+        }
+
+        // 2. PKCE code exchange: if Supabase redirected with ?code=..., exchange it for a session
+        const code = urlParams.get("code") || search.code;
+        if (code) {
+          const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchangeError) throw exchangeError;
+          if (data?.session && mounted) {
+            const dest = resolveDestination();
+            navigate({ to: dest, replace: true });
+            return;
+          }
+        }
+
+        // 3. Check for existing session (e.g. from hash tokens or already loaded)
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
 
-        if (data.session) {
-          const destination = search.next || "/community";
-          navigate({ to: destination });
+        if (sessionData?.session && mounted) {
+          const dest = resolveDestination();
+          navigate({ to: dest, replace: true });
           return;
         }
 
-        // Also listen for auth event in case hash tokens are still exchanging
-        const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+        // 4. Subscribe to auth state changes in case background exchange is completing
+        const {
+          data: { subscription },
+        } = supabase.auth.onAuthStateChange((event, session) => {
           if (!mounted) return;
-          if (event === "SIGNED_IN" && session) {
-            const destination = search.next || "/community";
-            navigate({ to: destination });
+          if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && session) {
+            const dest = resolveDestination();
+            navigate({ to: dest, replace: true });
           }
         });
 
-        // Timeout fallback if no session establishes within 5 seconds
-        const timer = setTimeout(() => {
-          if (mounted && !error) {
-            // Check once more before declaring error
-            void supabase.auth.getSession().then(({ data: finalData }) => {
-              if (finalData.session) {
-                navigate({ to: search.next || "/community" });
-              } else {
-                setError("Authentication session could not be established. Please try logging in again.");
-              }
-            });
+        // 5. Timeout fallback
+        const timer = setTimeout(async () => {
+          if (!mounted) return;
+          const { data: finalData } = await supabase.auth.getSession();
+          if (finalData?.session) {
+            navigate({ to: resolveDestination(), replace: true });
+          } else {
+            setError("Authentication session could not be established. Please try logging in again.");
           }
         }, 5000);
 
         return () => {
-          authListener.subscription.unsubscribe();
+          subscription.unsubscribe();
           clearTimeout(timer);
         };
       } catch (err: any) {
-        if (mounted) setError(err.message || "Failed to complete authentication");
+        if (mounted) {
+          setError(err?.message || "Failed to complete authentication");
+        }
       }
     };
 
-    void processSession();
+    void processAuth();
 
     return () => {
       mounted = false;
     };
-  }, [error, navigate, search.next]);
+  }, [navigate, search.code, search.next]);
 
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center p-4">

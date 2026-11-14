@@ -35,11 +35,17 @@ function AuthIndexPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const nextPath = search.next || "/community";
+  const nextPath =
+    search.next &&
+    search.next !== "/" &&
+    search.next !== "/auth" &&
+    !search.next.startsWith("/auth/")
+      ? search.next
+      : "/community";
 
   useEffect(() => {
     if (status === "authenticated") {
-      navigate({ to: nextPath });
+      navigate({ to: nextPath, replace: true });
     }
   }, [status, navigate, nextPath]);
 

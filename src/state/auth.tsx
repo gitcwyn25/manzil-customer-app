@@ -110,8 +110,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInWithTelegram = useCallback(async (next = "/community") => {
     try {
+      const targetNext = next && next !== "/" ? next : "/community";
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.setItem("manzil-auth-next", targetNext);
+        } catch {}
+      }
+
       const redirectOrigin = typeof window !== "undefined" ? window.location.origin : "https://app.manzilgroup.uz";
-      const callbackUrl = `${redirectOrigin}/auth/callback?next=${encodeURIComponent(next)}`;
+      // Exact callback URL without query parameters so Supabase allowlist matches and does not redirect to marketing Site URL
+      const callbackUrl = `${redirectOrigin}/auth/callback`;
       
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "custom:telegram" as any,
@@ -146,8 +154,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUpWithEmail = useCallback(
     async (email: string, password: string, name?: string, next = "/community") => {
       try {
+        const targetNext = next && next !== "/" ? next : "/community";
+        if (typeof window !== "undefined") {
+          try {
+            window.sessionStorage.setItem("manzil-auth-next", targetNext);
+          } catch {}
+        }
+
         const redirectOrigin = typeof window !== "undefined" ? window.location.origin : "https://app.manzilgroup.uz";
-        const callbackUrl = `${redirectOrigin}/auth/callback?next=${encodeURIComponent(next)}`;
+        const callbackUrl = `${redirectOrigin}/auth/callback`;
         
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -170,10 +185,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  const resetPasswordForEmail = useCallback(async (email: string, next = "/community") => {
+  const resetPasswordForEmail = useCallback(async (email: string, next = "/settings") => {
     try {
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.setItem("manzil-auth-next", next);
+          window.sessionStorage.setItem("manzil-auth-flow", "recovery");
+        } catch {}
+      }
+
       const redirectOrigin = typeof window !== "undefined" ? window.location.origin : "https://app.manzilgroup.uz";
-      const callbackUrl = `${redirectOrigin}/auth/callback?next=${encodeURIComponent(next)}&flow=recovery`;
+      const callbackUrl = `${redirectOrigin}/auth/callback`;
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: callbackUrl,
       });

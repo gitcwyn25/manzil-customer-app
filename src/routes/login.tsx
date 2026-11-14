@@ -22,7 +22,7 @@ function LoginPage() {
 
   useEffect(() => {
     if (status === "authenticated") {
-      navigate({ to: "/community" });
+      navigate({ to: "/community", replace: true });
     }
   }, [status, navigate]);
 
