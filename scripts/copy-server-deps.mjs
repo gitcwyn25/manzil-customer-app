@@ -15,7 +15,10 @@ if (fs.existsSync(serverFuncPkg)) {
       const dest = path.resolve(targetNodeModules, dep);
       if (fs.existsSync(src)) {
         console.log(`[postbuild] Copying ${dep} to ${dest}`);
-        fs.cpSync(src, dest, { recursive: true });
+        try {
+          fs.rmSync(dest, { recursive: true, force: true });
+        } catch {}
+        fs.cpSync(src, dest, { recursive: true, force: true });
       }
     }
   }
